@@ -13,3 +13,12 @@ axion_aks1 = {
     dns_prefix          = "axion-aks1"
   }
 }
+axion_acr1 = {
+  "acr1" = {
+    name = "axionacr1"
+    sku  = "Premium"
+    resource_group_name = "axion-rg1"
+    location = "East US"
+
+  }
+}

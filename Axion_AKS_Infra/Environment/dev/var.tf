@@ -18,3 +18,12 @@ variable "axion_aks1" {
     dns_prefix          = string
   }))
 }
+
+variable "axion_acr1" {
+  type = map(object({
+    name                = string
+    sku                 = string
+    resource_group_name = string
+    location            = string
+  }))
+}
