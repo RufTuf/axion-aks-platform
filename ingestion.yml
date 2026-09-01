@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: axion-ingestion
+spec:
+  selector:
+    matchLabels:
+      app: ingestionapp
+  template:
+    metadata:
+      labels:
+        app: ingestionapp
+    spec:
+      containers:
+      - name: ingestion-con
+        image: axionacr4321.azurecr.io/axioningestion:v1
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 8000
+
