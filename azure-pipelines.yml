@@ -58,6 +58,7 @@ stages:
         provider: 'azurerm'
         command: 'validate'
         workingDirectory: '$(terraformWorkingDirectory)'
+        backendServiceArm: 'axion_service_connection'
 
     # -----------------------------
     # Install TFSec
