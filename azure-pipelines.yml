@@ -1,0 +1,216 @@
+trigger:
+  - main
+
+pool:
+  name: Default
+
+variables:
+  terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Axion_AKS_Infra/Environment/dev'
+
+stages:
+
+# =========================================================
+# Stage 1: Terraform Installation
+# =========================================================
+- stage: Terraform_Installation
+  displayName: "Terraform Installation"
+
+  jobs:
+  - job: Terraform_Install
+    displayName: "Install Terraform"
+
+    steps:
+    - task: TerraformInstaller@1
+      displayName: "Install Terraform"
+      inputs:
+        terraformVersion: 'latest'
+
+
+# =========================================================
+# Stage 2: Terraform Init, Validate & Security Scan
+# =========================================================
+- stage: Terraform_Validation_Security
+  displayName: "Terraform Validation & Security Scan"
+  dependsOn: Terraform_Installation
+
+  jobs:
+  - job: Terraform_Validation
+    displayName: "Terraform Init Validate TFSec Checkov"
+
+    steps:
+
+    # -----------------------------
+    # Terraform Init
+    # -----------------------------
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Init"
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(terraformWorkingDirectory)'
+
+    # -----------------------------
+    # Terraform Validate
+    # -----------------------------
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Validate"
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(terraformWorkingDirectory)'
+
+    # -----------------------------
+    # Install TFSec
+    # -----------------------------
+    - script: |
+        brew install tfsec
+      displayName: "Install TFSec"
+
+    # -----------------------------
+    # TFSec Security Scan
+    # -----------------------------
+    - script: |
+        tfsec "$(terraformWorkingDirectory)" \
+          --format junit \
+          --out "$(Build.ArtifactStagingDirectory)/tfsec-results.xml"
+      displayName: "TFSec Security Scan"
+      continueOnError: false
+
+    # -----------------------------
+    # Publish TFSec Results
+    # -----------------------------
+    - task: PublishTestResults@2
+      displayName: "Publish TFSec Results"
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)/tfsec-results.xml'
+        testRunTitle: 'TFSec Security Scan'
+      condition: succeededOrFailed()
+
+    # -----------------------------
+    # Install Checkov
+    # -----------------------------
+    - script: |
+        python3 -m pip install checkov
+      displayName: "Install Checkov"
+
+    # -----------------------------
+    # Checkov Security Scan
+    # -----------------------------
+    - script: |
+        checkov \
+          -d "$(terraformWorkingDirectory)" \
+          --output junitxml \
+          --output-file-path "$(Build.ArtifactStagingDirectory)/checkov-results.xml"
+      displayName: "Checkov Security Scan"
+      continueOnError: false
+
+    # -----------------------------
+    # Publish Checkov Results
+    # -----------------------------
+    - task: PublishTestResults@2
+      displayName: "Publish Checkov Results"
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)/checkov-results.xml'
+        testRunTitle: 'Checkov Security Scan'
+      condition: succeededOrFailed()
+
+
+# =========================================================
+# Stage 3: Terraform Plan
+# =========================================================
+- stage: Terraform_Plan
+  displayName: "Terraform Plan"
+  dependsOn: Terraform_Validation_Security
+
+  jobs:
+  - job: Terraform_Plan
+    displayName: "Terraform Plan"
+
+    steps:
+
+    - task: TerraformInstaller@1
+      displayName: "Install Terraform"
+      inputs:
+        terraformVersion: 'latest'
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Init"
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(terraformWorkingDirectory)'
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Plan"
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: '$(terraformWorkingDirectory)'
+        commandOptions: '-out=tfplan'
+
+
+# =========================================================
+# Stage 4: Manual Validation
+# =========================================================
+- stage: Manual_Approval
+  displayName: "Manual Approval"
+  dependsOn: Terraform_Plan
+
+  jobs:
+  - job: Wait_For_Approval
+    displayName: "Approve Terraform Apply"
+
+    pool: server
+
+    steps:
+    - task: ManualValidation@1
+      displayName: "Manual Approval Before Terraform Apply"
+      timeoutInMinutes: 1440
+      inputs:
+        instructions: |
+          Please review the Terraform Plan.
+
+          Security scans:
+          - TFSec
+          - Checkov
+
+          If everything looks correct, approve this validation
+          to proceed with Terraform Apply.
+        onTimeout: 'reject'
+
+
+# =========================================================
+# Stage 5: Terraform Apply
+# =========================================================
+- stage: Terraform_Apply
+  displayName: "Terraform Apply"
+  dependsOn: Manual_Approval
+  condition: succeeded()
+
+  jobs:
+  - job: Terraform_Apply
+    displayName: "Apply Terraform Infrastructure"
+
+    steps:
+
+    - task: TerraformInstaller@1
+      displayName: "Install Terraform"
+      inputs:
+        terraformVersion: 'latest'
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Init"
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(terraformWorkingDirectory)'
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Apply"
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(terraformWorkingDirectory)'
+        commandOptions: '-auto-approve'
