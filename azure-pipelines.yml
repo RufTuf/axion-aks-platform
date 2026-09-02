@@ -6,11 +6,12 @@ pool:
 
 variables:
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Axion_AKS_Infra/Environment/dev'
+  serviceConnection: 'axion_service_connection'
 
 stages:
 
 # =========================================================
-# Stage 1: Terraform Installation
+# Stage 1 - Terraform Installation
 # =========================================================
 - stage: Terraform_Installation
   displayName: "Terraform Installation"
@@ -27,7 +28,7 @@ stages:
 
 
 # =========================================================
-# Stage 2: Terraform Init, Validate & Security Scan
+# Stage 2 - Terraform Init, Validate & Security
 # =========================================================
 - stage: Terraform_Validation_Security
   displayName: "Terraform Validation & Security Scan"
@@ -35,91 +36,89 @@ stages:
 
   jobs:
   - job: Terraform_Validation
-    displayName: "Terraform Init Validate TFSec Checkov"
+    displayName: "Terraform Init, Validate, TFSec & Checkov"
 
     steps:
 
-    # -----------------------------
+    # -----------------------------------------------------
     # Terraform Init
-    # -----------------------------
+    # -----------------------------------------------------
     - task: TerraformTaskV4@4
       displayName: "Terraform Init"
       inputs:
         provider: 'azurerm'
         command: 'init'
         workingDirectory: '$(terraformWorkingDirectory)'
+        backendServiceArm: '$(serviceConnection)'
 
-    # -----------------------------
+    # -----------------------------------------------------
     # Terraform Validate
-    # -----------------------------
+    # -----------------------------------------------------
     - task: TerraformTaskV4@4
       displayName: "Terraform Validate"
       inputs:
         provider: 'azurerm'
         command: 'validate'
         workingDirectory: '$(terraformWorkingDirectory)'
-        backendServiceArm: 'axion_service_connection'
 
-    # -----------------------------
+    # -----------------------------------------------------
     # Install TFSec
-    # -----------------------------
+    # -----------------------------------------------------
     - script: |
         brew install tfsec
       displayName: "Install TFSec"
 
-    # -----------------------------
-    # TFSec Security Scan
-    # -----------------------------
+    # -----------------------------------------------------
+    # TFSec Scan
+    # -----------------------------------------------------
     - script: |
         tfsec "$(terraformWorkingDirectory)" \
           --format junit \
           --out "$(Build.ArtifactStagingDirectory)/tfsec-results.xml"
       displayName: "TFSec Security Scan"
-      continueOnError: false
 
-    # -----------------------------
+    # -----------------------------------------------------
     # Publish TFSec Results
-    # -----------------------------
+    # -----------------------------------------------------
     - task: PublishTestResults@2
       displayName: "Publish TFSec Results"
+      condition: succeededOrFailed()
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(Build.ArtifactStagingDirectory)/tfsec-results.xml'
         testRunTitle: 'TFSec Security Scan'
-      condition: succeededOrFailed()
 
-    # -----------------------------
+    # -----------------------------------------------------
     # Install Checkov
-    # -----------------------------
+    # -----------------------------------------------------
     - script: |
-        python3 -m pip install checkov
+        python3 -m pip install --upgrade checkov
       displayName: "Install Checkov"
 
-    # -----------------------------
-    # Checkov Security Scan
-    # -----------------------------
+    # -----------------------------------------------------
+    # Checkov Scan
+    # -----------------------------------------------------
     - script: |
         checkov \
           -d "$(terraformWorkingDirectory)" \
           --output junitxml \
           --output-file-path "$(Build.ArtifactStagingDirectory)/checkov-results.xml"
       displayName: "Checkov Security Scan"
-      continueOnError: false
 
-    # -----------------------------
+    # -----------------------------------------------------
     # Publish Checkov Results
-    # -----------------------------
+    # -----------------------------------------------------
     - task: PublishTestResults@2
       displayName: "Publish Checkov Results"
+      condition: succeededOrFailed()
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(Build.ArtifactStagingDirectory)/checkov-results.xml'
         testRunTitle: 'Checkov Security Scan'
-      condition: succeededOrFailed()
 
 
 # =========================================================
-# Stage 3: Terraform Plan
+# Stage 3 - Terraform Plan
 # =========================================================
 - stage: Terraform_Plan
   displayName: "Terraform Plan"
@@ -136,24 +135,42 @@ stages:
       inputs:
         terraformVersion: 'latest'
 
+    # -----------------------------------------------------
+    # Terraform Init
+    # -----------------------------------------------------
     - task: TerraformTaskV4@4
       displayName: "Terraform Init"
       inputs:
         provider: 'azurerm'
         command: 'init'
         workingDirectory: '$(terraformWorkingDirectory)'
+        backendServiceArm: '$(serviceConnection)'
 
+    # -----------------------------------------------------
+    # Terraform Plan
+    # -----------------------------------------------------
     - task: TerraformTaskV4@4
       displayName: "Terraform Plan"
       inputs:
         provider: 'azurerm'
         command: 'plan'
         workingDirectory: '$(terraformWorkingDirectory)'
-        commandOptions: '-out=tfplan'
+        environmentServiceNameAzureRM: '$(serviceConnection)'
+        commandOptions: '-out=$(terraformWorkingDirectory)/tfplan'
+
+    # -----------------------------------------------------
+    # Publish Terraform Plan
+    # -----------------------------------------------------
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish Terraform Plan"
+      inputs:
+        targetPath: '$(terraformWorkingDirectory)/tfplan'
+        artifact: 'terraform-plan'
+        publishLocation: 'pipeline'
 
 
 # =========================================================
-# Stage 4: Manual Validation
+# Stage 4 - Manual Approval
 # =========================================================
 - stage: Manual_Approval
   displayName: "Manual Approval"
@@ -167,23 +184,25 @@ stages:
 
     steps:
     - task: ManualValidation@1
-      displayName: "Manual Approval Before Terraform Apply"
+      displayName: "Manual Approval Before Apply"
       timeoutInMinutes: 1440
+
       inputs:
         instructions: |
           Please review the Terraform Plan.
 
-          Security scans:
+          Security checks completed:
+          - Terraform Validate
           - TFSec
           - Checkov
 
-          If everything looks correct, approve this validation
-          to proceed with Terraform Apply.
+          Approve this validation to proceed with Terraform Apply.
+
         onTimeout: 'reject'
 
 
 # =========================================================
-# Stage 5: Terraform Apply
+# Stage 5 - Terraform Apply
 # =========================================================
 - stage: Terraform_Apply
   displayName: "Terraform Apply"
@@ -201,17 +220,34 @@ stages:
       inputs:
         terraformVersion: 'latest'
 
+    # -----------------------------------------------------
+    # Download Terraform Plan
+    # -----------------------------------------------------
+    - task: DownloadPipelineArtifact@2
+      displayName: "Download Terraform Plan"
+      inputs:
+        artifact: 'terraform-plan'
+        path: '$(Pipeline.Workspace)/terraform-plan'
+
+    # -----------------------------------------------------
+    # Terraform Init
+    # -----------------------------------------------------
     - task: TerraformTaskV4@4
       displayName: "Terraform Init"
       inputs:
         provider: 'azurerm'
         command: 'init'
         workingDirectory: '$(terraformWorkingDirectory)'
+        backendServiceArm: '$(serviceConnection)'
 
+    # -----------------------------------------------------
+    # Terraform Apply
+    # -----------------------------------------------------
     - task: TerraformTaskV4@4
       displayName: "Terraform Apply"
       inputs:
         provider: 'azurerm'
         command: 'apply'
         workingDirectory: '$(terraformWorkingDirectory)'
-        commandOptions: '-auto-approve'
+        environmentServiceNameAzureRM: '$(serviceConnection)'
+        commandOptions: '$(Pipeline.Workspace)/terraform-plan/tfplan'
