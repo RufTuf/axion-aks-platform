@@ -105,38 +105,6 @@ stages:
         testResultsFiles: '$(Build.ArtifactStagingDirectory)/tfsec-results.xml'
         testRunTitle: 'TFSec Security Scan'
 
-
-    # -----------------------------------------------------
-    # Install Checkov
-    # -----------------------------------------------------
-    - script: |
-        python3 -m pip install --upgrade checkov
-      displayName: "Install Checkov"
-
-
-    # -----------------------------------------------------
-    # Checkov Security Scan
-    # -----------------------------------------------------
-    - script: |
-        checkov \
-          -d "$(terraformWorkingDirectory)" \
-          --output junitxml \
-          --output-file-path "$(Build.ArtifactStagingDirectory)/checkov-results.xml"
-      displayName: "Checkov Security Scan"
-
-
-    # -----------------------------------------------------
-    # Publish Checkov Results
-    # -----------------------------------------------------
-    - task: PublishTestResults@2
-      displayName: "Publish Checkov Results"
-      condition: succeededOrFailed()
-      inputs:
-        testResultsFormat: 'JUnit'
-        testResultsFiles: '$(Build.ArtifactStagingDirectory)/checkov-results.xml'
-        testRunTitle: 'Checkov Security Scan'
-
-
 # =========================================================
 # STAGE 3 - Terraform Plan
 # =========================================================
